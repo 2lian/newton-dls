@@ -1,0 +1,45 @@
+[workspace]
+authors = ["Neppel Elian <elian.neppel@posteo.eu>"]
+channels = ["https://prefix.dev/conda-forge"]
+name = "newton-dls"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[environments]
+default = { features = ["newton"] }
+dev = { features = ["newton", "dev"] }
+
+[activation.env]
+NEWTON_CACHE_PATH = "./newton_cache"
+RMW_IMPLEMENTATION=""
+ROS_DOMAIN_ID="13"
+ROS_AUTOMATIC_DISCOVERY_RANGE="LOCALHOST"
+ROS_LOCALHOST_ONLY=""
+
+
+[system-requirements]
+cuda = "13.0"
+
+
+[tasks]
+
+[dependencies]
+python = ">=3.12.3,<3.15"
+
+[feature.newton.dependencies]
+python = "3.13.*"
+rerun-sdk = "*"
+pytorch-gpu = "*"
+mujoco = "*"
+open3d = "*"
+
+[feature.newton.pypi-dependencies]
+asyncio-for-robotics = ">=1.3.5, <2"
+newton = {path="deps/newton/", editable=false, extras=["examples"]}
+newton_dls = {path=".", editable=true}
+
+[feature.dev.dependencies]
+uv = "*"
+pyright = "*"
+isort = "*"
+black = "*"
