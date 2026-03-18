@@ -1,5 +1,5 @@
 # newton-dls
-something something
+Transitioning to isaac?
 
 ## Deps
 

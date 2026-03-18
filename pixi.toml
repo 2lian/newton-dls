@@ -5,11 +5,17 @@ name = "newton-dls"
 platforms = ["linux-64"]
 version = "0.1.0"
 
+[dependencies]
+python = ">=3.11.0,<3.15"
+
+
 [environments]
-default = { features = ["newton"] }
-dev = { features = ["newton", "dev"] }
+default = { features = ["isaac"] }
+# dev = { features = ["isaac", "dev"] }
+# newton = { features = ["newton"] }
 
 [activation.env]
+TERM = "xterm-256color" # fix for ghostty terminal emulator
 NEWTON_CACHE_PATH = "./newton_cache"
 RMW_IMPLEMENTATION=""
 ROS_DOMAIN_ID="13"
@@ -18,28 +24,95 @@ ROS_LOCALHOST_ONLY=""
 
 
 [system-requirements]
-cuda = "13.0"
+cuda = "12.8"
+libc="2.35"
 
 
-[tasks]
+[feature.isaac.tasks]
+setup_isaaclab = '''
+(git clone -b feature/newton --depth 1 git@github.com:isaac-sim/IsaacLab.git deps/IsaacLab || true) &&
+cd ./deps/IsaacLab/ &&
+bash ./isaaclab.sh --install
+'''
+isaaclab="bash ./deps/IsaacLab/isaaclab.sh"
 
-[dependencies]
-python = ">=3.12.3,<3.15"
+[feature.isaac.dependencies]
+python = "3.12.*"
+pip = "*"
+# git = "*"
+# gcc = "11.*"
+# c-compiler = "*"
+# cxx-compiler = "*"
+# make = "*"
+# cmake = "*"
+# pkg-config = "*"
 
-[feature.newton.dependencies]
-python = "3.13.*"
-rerun-sdk = "*"
-pytorch-gpu = "*"
-mujoco = "*"
-open3d = "*"
+### ISAACLAB pinned deps conflict ###
+# setuptools = "<82.0"
+# packaging = "==23.0"
+# Pillow = "==11.3.0"
+# starlette = "==0.49.1"
+# typing-extensions="==4.12.2"
+# idna = "==3.10"
+#
+# pytorch-gpu = "==2.7.0"
+# numpy = "==1.26.0"
+# sympy = "==1.13.3"
+# networkx = "==3.3"
+# fsspec = "==2024.6.1"
+# filelock = "==3.13.1"
+# markupsafe = "==2.1.3"
 
-[feature.newton.pypi-dependencies]
-asyncio-for-robotics = ">=1.3.5, <2"
-newton = {path="deps/newton/", editable=false, extras=["examples"]}
-newton_dls = {path=".", editable=true}
+[feature.isaac.pypi-options]
+index-url = "https://pypi.org/simple"
+extra-index-urls = ["https://pypi.nvidia.com"]
+index-strategy="unsafe-best-match"
+no-build-isolation = ["flatdict"]
+prerelease-mode = "allow"
 
-[feature.dev.dependencies]
-uv = "*"
-pyright = "*"
-isort = "*"
-black = "*"
+[pypi-options.dependency-overrides]
+starlette = "==0.49.1"
+pillow = "==12.1.1"
+coverage = "==7.6.1"
+packaging = "==26.0"
+
+[feature.isaac.pypi-dependencies]
+isaacsim = { version = "==6.0.0.0", extras = ["all", "extscache"]}
+isaaclab = { path = "./deps/IsaacLab/source/isaaclab"}
+isaaclab_assets = { path = "./deps/IsaacLab/source/isaaclab_assets/"}
+isaaclab_rl = { path = "./deps/IsaacLab/source/isaaclab_rl/"}
+isaaclab_mimic = { path = "./deps/IsaacLab/source/isaaclab_mimic/"}
+isaaclab_tasks = { path = "./deps/IsaacLab/source/isaaclab_tasks/"}
+isaaclab_contrib = { path = "./deps/IsaacLab/source/isaaclab_contrib/"}
+# torch = "==2.7.0"
+# torchvision = "==0.22.0"
+# torchaudio= "==2.7.0"
+
+
+[feature.isaac.activation]
+
+[feature.isaac.activation.env]
+ISAACLAB_PATH="./deps/IsaacLab/"
+RESOURCE_NAME="IsaacSim"
+# ISAACSIM_PATH="deps/IsaacSim/_build/linux-x86_64/release"
+# ISAACSIM_PYTHON_EXE="${ISAACSIM_PATH}/python.sh"
+
+# [feature.newton.dependencies]
+# python = "3.13.*"
+# rerun-sdk = "*"
+# pytorch-gpu = "*"
+# mujoco = "*"
+# open3d = "*"
+#
+# [feature.newton.pypi-dependencies]
+# asyncio-for-robotics = ">=1.3.5, <2"
+# newton = {path="deps/newton/", editable=false, extras=["examples"]}
+# newton_dls = {path=".", editable=true}
+
+# [feature.dev.dependencies]
+# click = "==8.1.7"
+# uv = "*"
+# pyright = "*"
+# isort = "*"
+# black = "*"
+# glow-md = ">=2.1.1,<3"
