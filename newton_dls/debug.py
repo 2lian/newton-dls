@@ -1,107 +1,187 @@
-import argparse
+import importlib
+import logging
+import os
+import warnings
+from collections import defaultdict
+from collections.abc import Callable
+from contextlib import suppress
+from typing import AsyncIterable
 
-import isaaclab.sim as sim_utils
-from isaaclab.app import AppLauncher
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+import asyncio_for_robotics as afor
+import newton
+import newton.examples
+import numpy as np
+import rerun as rr
+import warp as wp
+from asyncio_for_robotics.core.sub import asyncio
+from newton.examples import _ExampleBrowser, _format_fps
+from newton.examples.robot import example_robot_anymal_c_walk as newt_example
+from newton.tests.unittest_utils import find_nan_members
+from numpy.typing import NDArray
 
-# create argparser
-parser = argparse.ArgumentParser(
-    description="Tutorial on spawning prims into the scene."
-)
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# parse the arguments
-args_cli = parser.parse_args()
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-
-def design_scene():
-    """Designs the scene by spawning ground plane, light, objects and meshes from usd files."""
-    # Ground-plane
-    cfg_ground = sim_utils.GroundPlaneCfg()
-    cfg_ground.func("/World/defaultGroundPlane", cfg_ground)
-
-    # spawn distant light
-    cfg_light_distant = sim_utils.DistantLightCfg(
-        intensity=3000.0,
-        color=(0.75, 0.75, 0.75),
-    )
-    cfg_light_distant.func(
-        "/World/lightDistant", cfg_light_distant, translation=(1, 0, 10)
-    )
-
-    # create a new xform prim for all objects to be spawned under
-    sim_utils.create_prim("/World/Objects", "Xform")
-    # spawn a red cone
-    cfg_cone = sim_utils.ConeCfg(
-        radius=0.15,
-        height=0.5,
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-    )
-    cfg_cone.func("/World/Objects/Cone1", cfg_cone, translation=(-1.0, 1.0, 1.0))
-    cfg_cone.func("/World/Objects/Cone2", cfg_cone, translation=(-1.0, -1.0, 1.0))
-
-    # spawn a green cone with colliders and rigid body
-    cfg_cone_rigid = sim_utils.ConeCfg(
-        radius=0.15,
-        height=0.5,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(),
-        mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
-    )
-    cfg_cone_rigid.func(
-        "/World/Objects/ConeRigid",
-        cfg_cone_rigid,
-        translation=(-0.2, 0.0, 2.0),
-        orientation=(0.5, 0.0, 0.5, 0.0),
-    )
-
-    # spawn a blue cuboid with deformable body
-    cfg_cuboid_deformable = sim_utils.MeshCuboidCfg(
-        size=(0.2, 0.5, 0.2),
-        deformable_props=sim_utils.DeformableBodyPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
-        physics_material=sim_utils.DeformableBodyMaterialCfg(),
-    )
-    cfg_cuboid_deformable.func(
-        "/World/Objects/CuboidDeformable",
-        cfg_cuboid_deformable,
-        translation=(0.15, 0.0, 2.0),
-    )
-
-    # spawn a usd file of a table into the scene
-    cfg = sim_utils.UsdFileCfg(
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd"
-    )
-    cfg.func("/World/Objects/Table", cfg, translation=(0.0, 0.0, 1.05))
+logger = logging.getLogger()
+logger.addHandler(rr.LoggingHandler(f"logs/{__name__}"))
+logger.setLevel(-1)
 
 
-def main():
-    """Main function."""
+async def arun(example, async_looper: AsyncIterable, args):
+    """Copied and modified from newton
 
-    # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view([2.0, 0.0, 2.5], [-0.5, 0.0, 0.5])
-    # Design scene
-    design_scene()
-    # Play the simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
+    /home/elian/newton-dls/deps/newton/newton/examples/__init__.py
 
-    # Simulate physics
-    while simulation_app.is_running():
-        # perform step
-        sim.step()
+    Args:
+        example (): The thing to run
+        args ():
+        async_looper: at each iteration, the sim loop executes
+
+    Raises:
+        NotImplementedError:
+        ValueError:
+    """
+    viewer = example.viewer
+    example_class = type(example)
+
+    perform_test = args is not None and args.test
+    test_post_step = perform_test and hasattr(example, "test_post_step")
+    test_final = perform_test and hasattr(example, "test_final")
+
+    browser = _ExampleBrowser(viewer) if not perform_test else None
+
+    if hasattr(example, "gui") and hasattr(viewer, "register_ui_callback"):
+        viewer.register_ui_callback(lambda ui, ex=example: ex.gui(ui), position="side")
+
+    async for _ in async_looper:
+        if not viewer.is_running():
+            break
+        if browser is not None and browser.switch_target is not None:
+            example, example_class = browser.switch(example_class)
+            continue
+
+        if browser is not None and browser._reset_requested:
+            example = browser.reset(example_class)
+            continue
+
+        if example is None:
+            viewer.begin_frame(0.0)
+            viewer.end_frame()
+            continue
+
+        if not viewer.is_paused():
+            with wp.ScopedTimer("step", active=False):
+                example.step()
+        if test_post_step:
+            example.test_post_step()
+
+        with wp.ScopedTimer("render", active=False):
+            example.render()
+
+    if perform_test:
+        if test_final:
+            example.test_final()
+        elif not (test_post_step or test_final):
+            raise NotImplementedError(
+                "Example does not have a test_final or test_post_step method"
+            )
+
+    viewer.close()
+
+    if hasattr(viewer, "benchmark_result"):
+        result = viewer.benchmark_result()
+        if result is not None:
+            print(
+                f"Benchmark: {_format_fps(result['fps'])} FPS ({result['frames']} frames in {result['elapsed']:.2f}s)"
+            )
+
+    if perform_test:
+        # generic tests for finiteness of Newton objects
+        if hasattr(example, "state_0"):
+            nan_members = find_nan_members(example.state_0)
+            if nan_members:
+                raise ValueError(f"NaN members found in state_0: {nan_members}")
+        if hasattr(example, "state_1"):
+            nan_members = find_nan_members(example.state_1)
+            if nan_members:
+                raise ValueError(f"NaN members found in state_1: {nan_members}")
+        if hasattr(example, "model"):
+            nan_members = find_nan_members(example.model)
+            if nan_members:
+                raise ValueError(f"NaN members found in model: {nan_members}")
+        if hasattr(example, "control"):
+            nan_members = find_nan_members(example.control)
+            if nan_members:
+                raise ValueError(f"NaN members found in control: {nan_members}")
+        if hasattr(example, "contacts"):
+            nan_members = find_nan_members(example.contacts)
+            if nan_members:
+                raise ValueError(f"NaN members found in contacts: {nan_members}")
+
+
+class InjectedExample(newt_example.Example):
+    def __init__(self, viewer, args):
+        super().__init__(viewer, args)
+        self.step_sub = afor.BaseSub()
+
+    def simulate(self):
+        return super().simulate()
+
+    def step(self):
+        super().step()
+        rr.set_time("sim_step", sequence=self.sim_step)
+        rr.set_time("sim_time", duration=self.sim_time)
+        log_motors(self)
+
+
+def log_motors(sim: InjectedExample):
+    rr.log("/robot/joint/q", rr.Scalars(sim.state_0.joint_q.list()))
+    rr.log("/robot/joint/qd", rr.Scalars(sim.state_0.joint_qd.list()))
+    tfs: NDArray = sim.state_0.body_q.numpy()
+    frames = sim.model.body_label
+    for i, name in enumerate(frames):
+        rr.log(
+            f"/tf_tree/world/{name}",
+            rr.Transform3D(translation=tfs[i, :3]),
+            rr.TransformAxes3D(axis_length=0.1),
+        )
+
+def log_mesh(sim: InjectedExample):
+    for m in sim.model.shape_source:
+        if m is None:
+            continue
+        m: newton.Mesh
+        logger.info(m.vertices)
+
+
+def setup_rerun():
+    rr.init("newton-dls")
+    rr.save("data.rrd")
+    rr.connect_grpc()
+    logger.debug("Rerun started")
+    rr.set_time("sim_time", duration=0)
+    rr.set_time("sim_step", sequence=0)
+    try:
+        pass
+    except RuntimeError:
+        print(
+            "\n\n /!\\ \n Start rerun FIRST using: `pixi run rerun ./rerun_template.rbl` \n Then restart this sim to see the data live. \n The archive `data.rrd` cannot be opened for some reasons. \n /!\\ \n\n"
+        )
+
+
+async def main(viewer, args):
+    example = InjectedExample(viewer, args)
+    setup_rerun()
+    log_mesh(example)
+
+    async with asyncio.TaskGroup() as tg:
+        # tg.create_task(log_motors(example))
+        await arun(example, afor.Rate(1 / example.frame_dt).listen(), args)
+        logger.debug("Loop started")
+        for t in tg._tasks:
+            t.cancel()
 
 
 if __name__ == "__main__":
-    # run the main function
-    main()
-    # close sim app
-    simulation_app.close()
+    with suppress(KeyboardInterrupt):
+        parser = newt_example.Example.create_parser()
+        viewer, args = newton.examples.init(parser)
+
+        asyncio.run(main(viewer, args))
