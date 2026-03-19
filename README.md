@@ -18,6 +18,7 @@ Installation is [done through Pixi](https://pixi.prefix.dev/latest/)
 
 ```bash
 pixi install
+pixi run python -c "import isaacsim" # just to accept the EULA otherwise it is very very bugged
 ```
 
 ## Run
