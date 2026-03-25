@@ -302,7 +302,6 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-64/pytorch-gpu-2.10.0-cuda129_mkl_h0d04637_301.conda
       - conda: https://prefix.dev/conda-forge/linux-64/qhull-2020.2-h434a139_5.conda
       - conda: https://prefix.dev/conda-forge/linux-64/qt6-main-6.10.2-pl5321h16c4a6b_6.conda
-      - conda: https://prefix.dev/conda-forge/linux-64/quaternion-2024.0.13-py313h29aa505_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/rdma-core-61.0-h192683f_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/re2-2025.11.05-h5301d42_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/readline-8.3-h853b02a_0.conda
@@ -4962,21 +4961,6 @@ packages:
   purls: []
   size: 58118322
   timestamp: 1773865930316
-- conda: https://prefix.dev/conda-forge/linux-64/quaternion-2024.0.13-py313h29aa505_0.conda
-  sha256: a650507c1980323fe49eade599c5351cc91ef3c206e06366864183f6d173c43d
-  md5: f6b511be998ec6f9b691bea388aa258b
-  depends:
-  - __glibc >=2.17,<3.0.a0
-  - libgcc >=14
-  - numpy >=1.23,<3
-  - python >=3.13,<3.14.0a0
-  - python_abi 3.13.* *_cp313
-  license: MIT
-  license_family: MIT
-  purls:
-  - pkg:pypi/numpy-quaternion?source=hash-mapping
-  size: 100581
-  timestamp: 1764015033819
 - conda: https://prefix.dev/conda-forge/linux-64/rdma-core-61.0-h192683f_0.conda
   sha256: 8e0b7962cf8bec9a016cd91a6c6dc1f9ebc8e7e316b1d572f7b9047d0de54717
   md5: d487d93d170e332ab39803e05912a762

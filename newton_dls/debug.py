@@ -1,27 +1,122 @@
-import asyncio
+import importlib
 import logging
+import os
+import warnings
+from collections import defaultdict
+from collections.abc import Callable
 from contextlib import suppress
+from typing import AsyncIterable
 
 import asyncio_for_robotics as afor
 import newton
 import newton.examples
 import numpy as np
-import quaternion as qt
 import rerun as rr
-
-# from newton.examples.robot import example_robot_anymal_c_walk as newt_example
+import warp as wp
+from asyncio_for_robotics.core.sub import asyncio
+from newton.examples import _ExampleBrowser, _format_fps
+from newton.examples.robot import example_robot_anymal_c_walk as newt_example
+from newton.tests.unittest_utils import find_nan_members
 from numpy.typing import NDArray
-
-from . import world as sand_example
-from .mesh_stuff import newton_mesh_to_rerun
-from .utils import arun
 
 logger = logging.getLogger()
 logger.addHandler(rr.LoggingHandler(f"logs/{__name__}"))
 logger.setLevel(-1)
 
 
-class InjectedExample(sand_example.Example):
+async def arun(example, async_looper: AsyncIterable, args):
+    """Copied and modified from newton
+
+    /home/elian/newton-dls/deps/newton/newton/examples/__init__.py
+
+    Args:
+        example (): The thing to run
+        args ():
+        async_looper: at each iteration, the sim loop executes
+
+    Raises:
+        NotImplementedError:
+        ValueError:
+    """
+    viewer = example.viewer
+    example_class = type(example)
+
+    perform_test = args is not None and args.test
+    test_post_step = perform_test and hasattr(example, "test_post_step")
+    test_final = perform_test and hasattr(example, "test_final")
+
+    browser = _ExampleBrowser(viewer) if not perform_test else None
+
+    if hasattr(example, "gui") and hasattr(viewer, "register_ui_callback"):
+        viewer.register_ui_callback(lambda ui, ex=example: ex.gui(ui), position="side")
+
+    async for _ in async_looper:
+        if not viewer.is_running():
+            break
+        if browser is not None and browser.switch_target is not None:
+            example, example_class = browser.switch(example_class)
+            continue
+
+        if browser is not None and browser._reset_requested:
+            example = browser.reset(example_class)
+            continue
+
+        if example is None:
+            viewer.begin_frame(0.0)
+            viewer.end_frame()
+            continue
+
+        if not viewer.is_paused():
+            with wp.ScopedTimer("step", active=False):
+                example.step()
+        if test_post_step:
+            example.test_post_step()
+
+        with wp.ScopedTimer("render", active=False):
+            example.render()
+
+    if perform_test:
+        if test_final:
+            example.test_final()
+        elif not (test_post_step or test_final):
+            raise NotImplementedError(
+                "Example does not have a test_final or test_post_step method"
+            )
+
+    viewer.close()
+
+    if hasattr(viewer, "benchmark_result"):
+        result = viewer.benchmark_result()
+        if result is not None:
+            print(
+                f"Benchmark: {_format_fps(result['fps'])} FPS ({result['frames']} frames in {result['elapsed']:.2f}s)"
+            )
+
+    if perform_test:
+        # generic tests for finiteness of Newton objects
+        if hasattr(example, "state_0"):
+            nan_members = find_nan_members(example.state_0)
+            if nan_members:
+                raise ValueError(f"NaN members found in state_0: {nan_members}")
+        if hasattr(example, "state_1"):
+            nan_members = find_nan_members(example.state_1)
+            if nan_members:
+                raise ValueError(f"NaN members found in state_1: {nan_members}")
+        if hasattr(example, "model"):
+            nan_members = find_nan_members(example.model)
+            if nan_members:
+                raise ValueError(f"NaN members found in model: {nan_members}")
+        if hasattr(example, "control"):
+            nan_members = find_nan_members(example.control)
+            if nan_members:
+                raise ValueError(f"NaN members found in control: {nan_members}")
+        if hasattr(example, "contacts"):
+            nan_members = find_nan_members(example.contacts)
+            if nan_members:
+                raise ValueError(f"NaN members found in contacts: {nan_members}")
+
+
+class InjectedExample(newt_example.Example):
     def __init__(self, viewer, args):
         super().__init__(viewer, args)
         self.step_sub = afor.BaseSub()
@@ -34,100 +129,26 @@ class InjectedExample(sand_example.Example):
         rr.set_time("sim_step", sequence=self.sim_step)
         rr.set_time("sim_time", duration=self.sim_time)
         log_motors(self)
-        log_particules(self)
 
 
 def log_motors(sim: InjectedExample):
-
-    q: NDArray = sim.state_0.joint_q.numpy()
-    qd: NDArray = sim.state_0.joint_qd.numpy()
-    # you need to add this to the sim builder:
-    # builder.request_state_attributes("mujoco:qfrc_actuator")
-    qf: NDArray = sim.state_0.mujoco.qfrc_actuator.list()
-    # qf: NDArray = sim.control.joint_f.numpy()
-    for i in range(sim.model.joint_count):
-        sim.model.joint_label
-        rr.log(
-            f"/robot/joint/q/{sim.model.joint_label[i]}",
-            rr.Scalars(q[i]),
-        )
-        rr.log(
-            f"/robot/joint/qd/{sim.model.joint_label[i]}",
-            rr.Scalars(qd[i]),
-        )
-        rr.log(
-            f"/robot/joint/qf/{sim.model.joint_label[i]}",
-            rr.Scalars(qf[i]),
-        )
-
+    rr.log("/robot/joint/q", rr.Scalars(sim.state_0.joint_q.list()))
+    rr.log("/robot/joint/qd", rr.Scalars(sim.state_0.joint_qd.list()))
     tfs: NDArray = sim.state_0.body_q.numpy()
     frames = sim.model.body_label
     for i, name in enumerate(frames):
-        quat = qt.from_float_array(tfs[i, 3:])
-        frame_name = f"/tf/{name}"
         rr.log(
-            frame_name,
-            rr.Transform3D(
-                translation=tfs[i, :3],
-                quaternion=tfs[i, 3:],
-            ),
+            f"/tf_tree/world/{name}",
+            rr.Transform3D(translation=tfs[i, :3]),
             rr.TransformAxes3D(axis_length=0.1),
         )
 
-
-def log_particules(sim: InjectedExample):
-    particules = sim.state_0.particle_q.numpy()
-    particules_vel = sim.state_0.particle_qd.numpy()
-    # particules = sim.state_0.particle_f.numpy()
-    rr.log(
-        "/particules/tf",
-        rr.Points3D(particules, radii=rr.Radius(0.005), colors=[200, 170, 120, 255]),
-    )
-    rr.log(
-        "/particules/vel",
-        rr.Arrows3D(
-            vectors=particules_vel / 10,
-            origins=particules,
-            radii=rr.Radius.ui_points(0.5),
-        ),
-    )
-
-
 def log_mesh(sim: InjectedExample):
-    assert sim.model.shape_source is not None
-    assert sim.model.shape_label is not None
-    body_to_shapes: dict[int, list[int]] = sim.model.body_shapes
-    for index, ntn_mesh_obj, name in zip(
-        range(sim.model.shape_count), sim.model.shape_source, sim.model.shape_label
-    ):
-        logger.info(
-            f"Mesh: {index=} {name=} {sim.model.shape_type.numpy()[index]=} {sim.model.shape_scale.numpy()[index]=} {ntn_mesh_obj=}"
-        )
-        is_box = sim.model.shape_type.numpy()[index] == 7
-
-        if ntn_mesh_obj is None:
-            if not is_box:
-                continue
-        for body_ind, shapes in body_to_shapes.items():
-            if body_ind == -1:
-                continue
-            if index in shapes:
-                body_name = sim.model.body_label[body_ind]
-                name = f"{body_name}/{name}"
-        ntn_mesh: newton.Mesh = ntn_mesh_obj  # type: ignore
-        if not is_box:
-            rr_m = newton_mesh_to_rerun(ntn_mesh)
-        else:
-            rr_m = rr.Boxes3D(sizes=sim.model.shape_scale.numpy()[index] * 2)
-        rr.log(
-            f"/tf/{name}",
-            rr_m,
-            rr.Transform3D(
-                translation=sim.model.shape_transform.numpy()[index, :3],
-                quaternion=sim.model.shape_transform.numpy()[index, 3:],
-            ),
-            static=True,
-        )
+    for m in sim.model.shape_source:
+        if m is None:
+            continue
+        m: newton.Mesh
+        logger.info(m.vertices)
 
 
 def setup_rerun():
@@ -146,10 +167,8 @@ def setup_rerun():
 
 
 async def main(viewer, args):
-    setup_rerun()
-    logger.info("Instantiating Simulation")
     example = InjectedExample(viewer, args)
-    logger.info("Simulation instantiated")
+    setup_rerun()
     log_mesh(example)
 
     async with asyncio.TaskGroup() as tg:
@@ -162,7 +181,7 @@ async def main(viewer, args):
 
 if __name__ == "__main__":
     with suppress(KeyboardInterrupt):
-        parser = sand_example.Example.create_parser()
+        parser = newt_example.Example.create_parser()
         viewer, args = newton.examples.init(parser)
 
         asyncio.run(main(viewer, args))
